@@ -32,7 +32,7 @@ ____
     <td>100</td><td> 1258 ms</td><td>  21 ms</td><td> 59.9 x</td>
   </tr>
   <tr>
-    <td>200</td><td> 31438 ms</td><td>  375 ms</td><td> 20.76x</td>
+    <td>200</td><td> 31438 ms</td><td>  375 ms</td><td> 83.8x</td>
   </tr>
 </table>  
 ___  

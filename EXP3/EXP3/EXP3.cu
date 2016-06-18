@@ -30,11 +30,13 @@ typedef vector<int> Vi;
 
 #define THREADS 64
 
-#define MAXLEN 110//note: change if will be longer strings
+#define MAXLEN 210//note: change if will be longer strings
 #define INF (1<<29)
 
 bool InitMMTimer(UINT wTimerRes);
 void DestroyMMTimer(UINT wTimerRes, bool init);
+
+void generate_random_combo_strings(string &s0, string &s1, const int len);
 
 bool eval(const int *cur, const int *goal, const int len,int loc, int up, int down){
 	if(loc>len)return false;
@@ -106,14 +108,21 @@ __global__ void GPU_version(const int ii, int *D_DP, const int len){
 	
 	const int l=blockIdx.z;
 	const int m=blockIdx.y;
+
 	__shared__ int best;
+
 	if(threadIdx.x==0){
 		best=D_DP[D_3d_flat(ii-1,l,m,(len+1),(len+1))];
 	}
+
 	__syncthreads();
+
 	if(best>=INF)return;
+
 	const int j=threadIdx.x+blockIdx.x*blockDim.x;
+
 	if(j>len)return;
+
 	for(int k=0;k<=len;k++){
 		if(((D_cur[ii]+j-k)%10+10)%10==D_goal[ii]){
 			atomicMin(&D_DP[D_3d_flat(ii,j,k,(len+1),(len+1))],(best+max(0,j-l)+max(0,k-m)) );
@@ -121,6 +130,7 @@ __global__ void GPU_version(const int ii, int *D_DP, const int len){
 		}
 	}
 }
+
 __global__ void last_step(const int *D_DP,int *best_val,const int len){
 	const int i=threadIdx.x+blockIdx.x*blockDim.x;
 	if(i<=len){
@@ -129,12 +139,27 @@ __global__ void last_step(const int *D_DP,int *best_val,const int len){
 }
 
 int main(){
-        char ch;
+
         srand(time(NULL));
-	
 		
-		const string s0="5390863801527525349142229108298075699798617845613912347987984732789432009090909090904218989432814923";
-		const string s1="5691764076679014302854836840311218635202200369261121447812739923746784821749837498209099098423788737";
+		string s0="5390863801527525349142229108298075699798617845613912347987984732789432009090909090904218989432814923";
+		string s1="5691764076679014302854836840311218635202200369261121447812739923746784821749837498209099098423788737";
+
+		bool generate_random=true;
+		if(generate_random){
+			int big_combo_string_size=200;
+			s0.clear();
+			s1.clear();
+			s0.resize(big_combo_string_size,'0');
+			s1.resize(big_combo_string_size,'0');
+			generate_random_combo_strings(s0,s1,big_combo_string_size);
+
+			cout<<"\nstarting string= "<<s0<<'\n';
+			cout<<"target string= "<<s1<<'\n';
+
+		}
+
+
 		const int s_len=s0.length();
 		cout<<"\nLength= "<<s_len<<'\n';
 		int *a0=(int *)malloc((s_len+1)*sizeof(int));
@@ -159,8 +184,9 @@ int main(){
 		CPU_time=endTime-startTime;
 		cout<<"CPU solution timing: "<<CPU_time<< " , answer= "<<CPU_ans<<'\n';
 		DestroyMMTimer(wTimerRes, init);
+		cudaError_t err=cudaFree(0);
 
-		cudaError_t err=cudaMemcpyToSymbol(D_cur,a0,(s_len+1)*sizeof(int));
+		err=cudaMemcpyToSymbol(D_cur,a0,(s_len+1)*sizeof(int));
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 		err=cudaMemcpyToSymbol(D_goal,a1,(s_len+1)*sizeof(int));
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
@@ -173,22 +199,25 @@ int main(){
 		err=cudaMalloc((void**)&best_val,sizeof(int));
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 
+		const int num_threads= (s_len>=128) ? 128:64;
+
 		int ii=1,B_val=INF;
-		dim3 Grid((s_len+THREADS)/THREADS,(s_len+1),(s_len+1));
+		dim3 Grid((s_len+num_threads)/num_threads,(s_len+1),(s_len+1));
+
 		wTimerRes = 0;
 		init = InitMMTimer(wTimerRes);
 		startTime = timeGetTime();
 
-		set_DP<<<(problemspace+THREADS-1)/THREADS,THREADS>>>(D_DP,problemspace);
-		err = cudaThreadSynchronize();
+		set_DP<<<(problemspace+num_threads-1)/num_threads,num_threads>>>(D_DP,problemspace);
+		err = cudaDeviceSynchronize();
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 
 		err = cudaMemset(D_DP,0,sizeof(int));
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 
 		for(;ii<=s_len;ii++){
-			GPU_version<<<Grid,THREADS>>>(ii,D_DP,s_len);
-			err = cudaThreadSynchronize();
+			GPU_version<<<Grid,num_threads>>>(ii,D_DP,s_len);
+			err = cudaDeviceSynchronize();
 			if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 		}
 
@@ -196,8 +225,8 @@ int main(){
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 
 		Grid.z=1;
-		last_step<<<Grid,THREADS>>>(D_DP,best_val,s_len);
-		err = cudaThreadSynchronize();
+		last_step<<<Grid,num_threads>>>(D_DP,best_val,s_len);
+		err = cudaDeviceSynchronize();
 		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
 
 		err=cudaMemcpy(&GPU_ans,best_val,sizeof(int),_DTH);
@@ -216,7 +245,10 @@ int main(){
 
 		free(a0);
 		free(a1);
-        cin>>ch;
+
+		err=cudaDeviceReset();
+		if(err!=cudaSuccess){printf("%s in %s at line %d\n",cudaGetErrorString(err),__FILE__,__LINE__);}
+   
         return 0;
 }
 
@@ -231,4 +263,16 @@ bool InitMMTimer(UINT wTimerRes){
 void DestroyMMTimer(UINT wTimerRes, bool init){
         if(init)
 			timeEndPeriod(wTimerRes);
+}
+
+void generate_random_combo_strings(string &s0, string &s1, const int len){
+	int r0=0,r1=0;
+	for(int i=0;i<len;i++){
+		r0=rand()%10;
+		r1=rand()%10;
+		s0[i]=char('0'+r0);
+		s1[i]=char('0'+r1);
+	}
+
+
 }
